@@ -9,11 +9,16 @@ const US_STATES = new Set([
   "SD","TN","TX","UT","VT","VA","WA","WV","WI","WY","DC"
 ]);
 
-const requestSchema = z.object({
+const cityStateSchema = z.object({
   city: z.string().min(1).max(100),
   state: z.string().transform((s) => s.toUpperCase()).pipe(
     z.string().refine((s) => US_STATES.has(s), "Invalid US state code")
   ),
+  zip: z.string().optional(),
+});
+
+const zipOnlySchema = z.object({
+  zip: z.string().regex(/^\d{5}$/, "Must be a 5-digit US zip code"),
 });
 
 // Simple in-memory cache (15-minute TTL)
@@ -23,10 +28,23 @@ const CACHE_TTL = 15 * 60 * 1000;
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { city, state } = requestSchema.parse(body);
 
-    // Check cache
-    const cacheKey = `${city.toLowerCase()}-${state}`;
+    // Support both city+state and zip-only inputs
+    let location: string;
+    let cacheKey: string;
+
+    if (body.zip && !body.city) {
+      // Zip-only mode
+      const { zip } = zipOnlySchema.parse(body);
+      location = `zip code ${zip}`;
+      cacheKey = `zip-${zip}`;
+    } else {
+      // City+state mode (may also include zip for extra precision)
+      const { city, state, zip } = cityStateSchema.parse(body);
+      location = zip ? `${city}, ${state} ${zip}` : `${city}, ${state}`;
+      cacheKey = `${city.toLowerCase()}-${state}${zip ? `-${zip}` : ""}`;
+    }
+
     const cached = cache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
       return NextResponse.json({ report: cached.data, cached: true });
@@ -84,7 +102,7 @@ Format with the section headers in ALL CAPS on their own line. Use line breaks b
           },
           {
             role: "user",
-            content: `Give me a comprehensive weather report for ${city}, ${state}.`,
+            content: `Give me a comprehensive weather report for ${location}.`,
           },
         ],
         max_tokens: 1000,
@@ -119,7 +137,7 @@ Format with the section headers in ALL CAPS on their own line. Use line breaks b
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json(
-        { error: "Invalid input. Please provide a valid city name and 2-letter state code." },
+        { error: "Invalid input. Please provide a valid city/state or a 5-digit US zip code." },
         { status: 400 }
       );
     }

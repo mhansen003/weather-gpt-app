@@ -37,14 +37,22 @@ export async function GET(request: NextRequest) {
         messages: [
           {
             role: "system",
-            content: `You are a US city autocomplete engine. Given a partial search query, suggest up to 6 matching US cities. Consider:
-- Cities that START with the query (highest priority)
-- Cities that CONTAIN the query
+            content: `You are a US location autocomplete engine. Given a partial search query, suggest up to 6 matching US locations. The query can be:
+- A partial city name (e.g. "den" -> Denver, CO)
+- A US zip code or partial zip code (e.g. "80202" -> Denver, CO 80202, "902" -> Los Angeles, CA 90201)
+- A state name or abbreviation (e.g. "texas" -> Houston, TX; Dallas, TX; etc.)
+- Natural language (e.g. "beach town florida")
+
+Rules:
+- Cities that START with the query get highest priority
 - Popular/well-known cities first
 - Include cities from different states when the name is common (e.g. Portland OR, Portland ME)
+- If the input is a zip code (all digits), resolve it to the city and include the zip
 
-Respond with ONLY a JSON array of strings. Each string must be "City, ST" format where ST is the 2-letter state code.
-Example: ["Denver, CO", "Detroit, MI", "Des Moines, IA"]
+Respond with ONLY a JSON array of strings. Format each entry as:
+- For city matches: "City, ST"
+- For zip code matches: "City, ST ZIPCODE"
+Examples: ["Denver, CO", "Denver, CO 80202", "Detroit, MI"]
 
 IMPORTANT: Return ONLY the JSON array. No explanation, no markdown, no extra text.`,
           },
@@ -79,10 +87,10 @@ IMPORTANT: Return ONLY the JSON array. No explanation, no markdown, no extra tex
       return NextResponse.json({ suggestions: [] });
     }
 
-    // Validate each suggestion is "City, ST" format
+    // Validate each suggestion is "City, ST" or "City, ST ZIPCODE" format
     const suggestions = parsed
       .filter((s: unknown): s is string =>
-        typeof s === "string" && /^.+,\s*[A-Z]{2}$/.test(s)
+        typeof s === "string" && /^.+,\s*[A-Z]{2}(\s+\d{5})?$/.test(s)
       )
       .slice(0, 6);
 

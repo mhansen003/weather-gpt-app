@@ -10,6 +10,7 @@ export default function Home() {
   const [highlightIndex, setHighlightIndex] = useState(-1);
   const [selectedCity, setSelectedCity] = useState("");
   const [selectedState, setSelectedState] = useState("");
+  const [selectedZip, setSelectedZip] = useState("");
   const [report, setReport] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -74,6 +75,7 @@ export default function Home() {
       setQuery(value);
       setSelectedCity("");
       setSelectedState("");
+      setSelectedZip("");
       fetchSuggestions(value);
     },
     [fetchSuggestions]
@@ -81,11 +83,20 @@ export default function Home() {
 
   // Select a city from suggestions
   const selectCity = useCallback((cityState: string) => {
-    // Parse "City, ST" format
+    // Parse "City, ST" or "City, ST 80202" format
     const commaIdx = cityState.lastIndexOf(",");
     if (commaIdx > 0) {
       setSelectedCity(cityState.slice(0, commaIdx).trim());
-      setSelectedState(cityState.slice(commaIdx + 1).trim());
+      const afterComma = cityState.slice(commaIdx + 1).trim();
+      // Check for "ST ZIPCODE" pattern
+      const zipMatch = afterComma.match(/^([A-Z]{2})\s+(\d{5})$/);
+      if (zipMatch) {
+        setSelectedState(zipMatch[1]);
+        setSelectedZip(zipMatch[2]);
+      } else {
+        setSelectedState(afterComma);
+        setSelectedZip("");
+      }
     }
     setQuery(cityState);
     setShowSuggestions(false);
@@ -156,22 +167,38 @@ export default function Home() {
   async function handleSubmit(e?: React.FormEvent) {
     if (e) e.preventDefault();
 
-    // If they typed a custom entry like "Denver, CO" without selecting from dropdown
     let city = selectedCity;
     let state = selectedState;
+    let zip = selectedZip;
+
     if (!city || !state) {
-      const commaIdx = query.lastIndexOf(",");
-      if (commaIdx > 0) {
-        const c = query.slice(0, commaIdx).trim();
-        const s = query.slice(commaIdx + 1).trim().toUpperCase();
-        if (c.length > 0 && s.length === 2) {
-          city = c;
-          state = s;
+      const trimmed = query.trim();
+
+      // Check if the input is a 5-digit zip code
+      if (/^\d{5}$/.test(trimmed)) {
+        zip = trimmed;
+        city = "";
+        state = "";
+      } else {
+        // Try parsing "City, ST" or "City, ST 80202" from typed input
+        const commaIdx = trimmed.lastIndexOf(",");
+        if (commaIdx > 0) {
+          const c = trimmed.slice(0, commaIdx).trim();
+          const afterComma = trimmed.slice(commaIdx + 1).trim().toUpperCase();
+          const zipMatch = afterComma.match(/^([A-Z]{2})\s+(\d{5})$/);
+          if (zipMatch) {
+            city = c;
+            state = zipMatch[1];
+            zip = zipMatch[2];
+          } else if (c.length > 0 && afterComma.length === 2) {
+            city = c;
+            state = afterComma;
+          }
         }
-      }
-      if (!city || !state) {
-        setError("Please select a city from the AI suggestions, or type as \"City, ST\" (e.g. Denver, CO)");
-        return;
+        if (!city && !state && !zip) {
+          setError("Enter a city name, zip code, or select from AI suggestions (e.g. \"Denver, CO\" or \"80202\")");
+          return;
+        }
       }
     }
 
@@ -181,11 +208,21 @@ export default function Home() {
     setCached(false);
     setShowSuggestions(false);
 
+    // Build the request body — zip-only or city+state (+optional zip)
+    const requestBody: Record<string, string> = {};
+    if (city && state) {
+      requestBody.city = city;
+      requestBody.state = state;
+      if (zip) requestBody.zip = zip;
+    } else if (zip) {
+      requestBody.zip = zip;
+    }
+
     try {
       const res = await fetch("/api/weather", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ city, state }),
+        body: JSON.stringify(requestBody),
       });
 
       const data = await res.json();
@@ -306,7 +343,7 @@ export default function Home() {
                 <input
                   ref={inputRef}
                   type="text"
-                  placeholder="Start typing a city name..."
+                  placeholder="City name or zip code..."
                   value={query}
                   onChange={(e) => handleInputChange(e.target.value)}
                   onFocus={() => {
@@ -371,12 +408,14 @@ export default function Home() {
             </div>
 
             {/* Selected city indicator */}
-            {selectedCity && selectedState && (
+            {(selectedCity && selectedState || selectedZip) && (
               <div className="mt-2 flex items-center gap-1.5 text-xs text-green-600 dark:text-green-400">
                 <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                 </svg>
-                {selectedCity}, {selectedState} selected
+                {selectedCity && selectedState
+                  ? `${selectedCity}, ${selectedState}${selectedZip ? ` ${selectedZip}` : ""}`
+                  : `Zip ${selectedZip}`} selected
               </div>
             )}
           </div>
@@ -411,7 +450,11 @@ export default function Home() {
           <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-lg p-6">
             <div className="flex items-center justify-between mb-5 pb-3 border-b border-gray-100 dark:border-gray-700">
               <h2 className="text-xl font-bold text-gray-900 dark:text-white">
-                📍 {selectedCity || query.split(",")[0]?.trim()}, {selectedState || query.split(",")[1]?.trim()}
+                📍 {selectedCity && selectedState
+                  ? `${selectedCity}, ${selectedState}${selectedZip ? ` ${selectedZip}` : ""}`
+                  : selectedZip
+                    ? `Zip Code ${selectedZip}`
+                    : query}
               </h2>
               <div className="flex items-center gap-2">
                 {cached && (
