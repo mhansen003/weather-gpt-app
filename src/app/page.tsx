@@ -1,58 +1,140 @@
 "use client";
 
-import { useState } from "react";
-
-const US_STATES = [
-  { code: "AL", name: "Alabama" }, { code: "AK", name: "Alaska" },
-  { code: "AZ", name: "Arizona" }, { code: "AR", name: "Arkansas" },
-  { code: "CA", name: "California" }, { code: "CO", name: "Colorado" },
-  { code: "CT", name: "Connecticut" }, { code: "DE", name: "Delaware" },
-  { code: "DC", name: "District of Columbia" }, { code: "FL", name: "Florida" },
-  { code: "GA", name: "Georgia" }, { code: "HI", name: "Hawaii" },
-  { code: "ID", name: "Idaho" }, { code: "IL", name: "Illinois" },
-  { code: "IN", name: "Indiana" }, { code: "IA", name: "Iowa" },
-  { code: "KS", name: "Kansas" }, { code: "KY", name: "Kentucky" },
-  { code: "LA", name: "Louisiana" }, { code: "ME", name: "Maine" },
-  { code: "MD", name: "Maryland" }, { code: "MA", name: "Massachusetts" },
-  { code: "MI", name: "Michigan" }, { code: "MN", name: "Minnesota" },
-  { code: "MS", name: "Mississippi" }, { code: "MO", name: "Missouri" },
-  { code: "MT", name: "Montana" }, { code: "NE", name: "Nebraska" },
-  { code: "NV", name: "Nevada" }, { code: "NH", name: "New Hampshire" },
-  { code: "NJ", name: "New Jersey" }, { code: "NM", name: "New Mexico" },
-  { code: "NY", name: "New York" }, { code: "NC", name: "North Carolina" },
-  { code: "ND", name: "North Dakota" }, { code: "OH", name: "Ohio" },
-  { code: "OK", name: "Oklahoma" }, { code: "OR", name: "Oregon" },
-  { code: "PA", name: "Pennsylvania" }, { code: "RI", name: "Rhode Island" },
-  { code: "SC", name: "South Carolina" }, { code: "SD", name: "South Dakota" },
-  { code: "TN", name: "Tennessee" }, { code: "TX", name: "Texas" },
-  { code: "UT", name: "Utah" }, { code: "VT", name: "Vermont" },
-  { code: "VA", name: "Virginia" }, { code: "WA", name: "Washington" },
-  { code: "WV", name: "West Virginia" }, { code: "WI", name: "Wisconsin" },
-  { code: "WY", name: "Wyoming" },
-];
+import { useState, useRef, useEffect, useCallback } from "react";
+import { US_CITIES } from "./us-cities";
 
 export default function Home() {
-  const [city, setCity] = useState("");
-  const [state, setState] = useState("");
+  const [query, setQuery] = useState("");
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [highlightIndex, setHighlightIndex] = useState(-1);
+  const [selectedCity, setSelectedCity] = useState("");
+  const [selectedState, setSelectedState] = useState("");
   const [report, setReport] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [cached, setCached] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const suggestionsRef = useRef<HTMLDivElement>(null);
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!city.trim() || !state) return;
+  // Filter cities as user types
+  const handleInputChange = useCallback((value: string) => {
+    setQuery(value);
+    setSelectedCity("");
+    setSelectedState("");
+
+    if (value.trim().length === 0) {
+      setSuggestions([]);
+      setShowSuggestions(false);
+      return;
+    }
+
+    const lower = value.toLowerCase();
+    const matches = US_CITIES.filter((c) => c.toLowerCase().includes(lower)).slice(0, 8);
+    setSuggestions(matches);
+    setShowSuggestions(matches.length > 0);
+    setHighlightIndex(-1);
+  }, []);
+
+  // Select a city from suggestions
+  const selectCity = useCallback((cityState: string) => {
+    const parts = cityState.split(", ");
+    if (parts.length === 2) {
+      setSelectedCity(parts[0]);
+      setSelectedState(parts[1]);
+    }
+    setQuery(cityState);
+    setShowSuggestions(false);
+    setHighlightIndex(-1);
+  }, []);
+
+  // Keyboard navigation for suggestions
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (!showSuggestions || suggestions.length === 0) {
+        if (e.key === "Enter" && selectedCity && selectedState) {
+          e.preventDefault();
+          handleSubmit();
+        }
+        return;
+      }
+
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setHighlightIndex((prev) => (prev < suggestions.length - 1 ? prev + 1 : 0));
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setHighlightIndex((prev) => (prev > 0 ? prev - 1 : suggestions.length - 1));
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        if (highlightIndex >= 0) {
+          selectCity(suggestions[highlightIndex]);
+        }
+      } else if (e.key === "Escape") {
+        setShowSuggestions(false);
+      } else if (e.key === "Tab" && highlightIndex >= 0) {
+        e.preventDefault();
+        selectCity(suggestions[highlightIndex]);
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [showSuggestions, suggestions, highlightIndex, selectedCity, selectedState]
+  );
+
+  // Close suggestions when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        suggestionsRef.current &&
+        !suggestionsRef.current.contains(e.target as Node) &&
+        inputRef.current &&
+        !inputRef.current.contains(e.target as Node)
+      ) {
+        setShowSuggestions(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  // Scroll highlighted suggestion into view
+  useEffect(() => {
+    if (highlightIndex >= 0 && suggestionsRef.current) {
+      const items = suggestionsRef.current.children;
+      if (items[highlightIndex]) {
+        (items[highlightIndex] as HTMLElement).scrollIntoView({ block: "nearest" });
+      }
+    }
+  }, [highlightIndex]);
+
+  async function handleSubmit(e?: React.FormEvent) {
+    if (e) e.preventDefault();
+
+    // If they typed a custom entry like "Denver, CO" without selecting from dropdown
+    let city = selectedCity;
+    let state = selectedState;
+    if (!city || !state) {
+      const parts = query.split(",").map((s) => s.trim());
+      if (parts.length === 2 && parts[0].length > 0 && parts[1].length === 2) {
+        city = parts[0];
+        state = parts[1].toUpperCase();
+      } else {
+        setError("Please select a city from the suggestions, or type as \"City, ST\" (e.g. Denver, CO)");
+        return;
+      }
+    }
 
     setLoading(true);
     setError("");
     setReport("");
     setCached(false);
+    setShowSuggestions(false);
 
     try {
       const res = await fetch("/api/weather", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ city: city.trim(), state }),
+        body: JSON.stringify({ city, state }),
       });
 
       const data = await res.json();
@@ -71,9 +153,73 @@ export default function Home() {
     }
   }
 
+  // Highlight matching text in suggestions
+  function highlightMatch(text: string, query: string) {
+    const lower = text.toLowerCase();
+    const idx = lower.indexOf(query.toLowerCase());
+    if (idx === -1) return text;
+    return (
+      <>
+        {text.slice(0, idx)}
+        <span className="font-semibold text-blue-600 dark:text-blue-400">
+          {text.slice(idx, idx + query.length)}
+        </span>
+        {text.slice(idx + query.length)}
+      </>
+    );
+  }
+
+  // Parse weather sections for styled display
+  function renderWeatherReport(text: string) {
+    const sectionIcons: Record<string, string> = {
+      "CURRENT CONDITIONS": "🌡️",
+      "TODAY'S DETAILS": "📅",
+      "5-DAY FORECAST": "📆",
+      "WEATHER ALERTS": "⚠️",
+      "WHAT TO KNOW": "💡",
+    };
+
+    const sections = text.split(/\n(?=[A-Z]{2,}[\s\w'-]*\n)/);
+
+    return sections.map((section, i) => {
+      const lines = section.trim().split("\n");
+      const header = lines[0]?.trim();
+      const isSection = Object.keys(sectionIcons).some(
+        (key) => header.toUpperCase().includes(key)
+      );
+
+      if (isSection) {
+        const icon = Object.entries(sectionIcons).find(
+          ([key]) => header.toUpperCase().includes(key)
+        )?.[1] || "📋";
+        const body = lines.slice(1).join("\n").trim();
+
+        return (
+          <div key={i} className="mb-5">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-lg">{icon}</span>
+              <h3 className="text-sm font-bold uppercase tracking-wider text-blue-700 dark:text-blue-400">
+                {header}
+              </h3>
+            </div>
+            <div className="text-gray-700 dark:text-gray-300 whitespace-pre-line leading-relaxed pl-7 text-sm">
+              {body}
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div key={i} className="text-gray-700 dark:text-gray-300 whitespace-pre-line leading-relaxed text-sm mb-3">
+          {section.trim()}
+        </div>
+      );
+    });
+  }
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-sky-50 to-blue-100 dark:from-gray-900 dark:to-gray-800 flex items-center justify-center p-4">
-      <div className="w-full max-w-xl">
+    <div className="min-h-screen bg-gradient-to-br from-sky-50 via-blue-50 to-indigo-100 dark:from-gray-900 dark:via-gray-850 dark:to-gray-800 flex items-start justify-center p-4 pt-12 sm:pt-20">
+      <div className="w-full max-w-2xl">
         {/* Header */}
         <div className="text-center mb-8">
           <div className="text-5xl mb-3">🌤️</div>
@@ -81,86 +227,145 @@ export default function Home() {
             Weather GPT
           </h1>
           <p className="text-gray-500 dark:text-gray-400 mt-1">
-            AI-powered weather reports for any US city
+            Comprehensive AI weather reports for any US city
           </p>
         </div>
 
-        {/* Form Card */}
+        {/* Search Card */}
         <form
           onSubmit={handleSubmit}
-          className="bg-white dark:bg-gray-800 rounded-2xl shadow-lg p-6 mb-6"
+          className="bg-white dark:bg-gray-800 rounded-2xl shadow-lg p-5 mb-6"
         >
-          <div className="flex flex-col sm:flex-row gap-3">
-            <input
-              type="text"
-              placeholder="City name"
-              value={city}
-              onChange={(e) => setCity(e.target.value)}
-              className="flex-1 px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              required
-            />
-            <select
-              value={state}
-              onChange={(e) => setState(e.target.value)}
-              className="px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              required
-            >
-              <option value="">State</option>
-              {US_STATES.map((s) => (
-                <option key={s.code} value={s.code}>
-                  {s.code} - {s.name}
-                </option>
-              ))}
-            </select>
-            <button
-              type="submit"
-              disabled={loading || !city.trim() || !state}
-              className="px-6 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 dark:disabled:bg-blue-800 text-white font-medium rounded-xl transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 cursor-pointer disabled:cursor-not-allowed"
-            >
-              {loading ? (
-                <span className="flex items-center gap-2">
-                  <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          <div className="relative">
+            <div className="flex gap-3">
+              <div className="relative flex-1">
+                <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
+                  <svg className="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                   </svg>
-                  Loading
-                </span>
-              ) : (
-                "Get Weather"
-              )}
-            </button>
+                </div>
+                <input
+                  ref={inputRef}
+                  type="text"
+                  placeholder="Search for a city... (e.g. Denver, San Francisco)"
+                  value={query}
+                  onChange={(e) => handleInputChange(e.target.value)}
+                  onFocus={() => {
+                    if (suggestions.length > 0) setShowSuggestions(true);
+                  }}
+                  onKeyDown={handleKeyDown}
+                  autoComplete="off"
+                  className="w-full pl-10 pr-4 py-3 rounded-xl border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                />
+
+                {/* Autocomplete Dropdown */}
+                {showSuggestions && suggestions.length > 0 && (
+                  <div
+                    ref={suggestionsRef}
+                    className="absolute z-50 top-full left-0 right-0 mt-1 bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-xl shadow-xl overflow-hidden max-h-64 overflow-y-auto"
+                  >
+                    {suggestions.map((city, i) => (
+                      <button
+                        key={city + i}
+                        type="button"
+                        onClick={() => selectCity(city)}
+                        className={`w-full text-left px-4 py-2.5 text-sm transition-colors flex items-center gap-3 cursor-pointer ${
+                          i === highlightIndex
+                            ? "bg-blue-50 dark:bg-blue-900/30 text-blue-900 dark:text-blue-200"
+                            : "text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600"
+                        }`}
+                      >
+                        <svg className="h-4 w-4 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                        <span>{highlightMatch(city, query)}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="px-6 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 dark:disabled:bg-blue-800 text-white font-medium rounded-xl transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 cursor-pointer disabled:cursor-not-allowed flex items-center gap-2 text-sm whitespace-nowrap"
+              >
+                {loading ? (
+                  <>
+                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    Fetching...
+                  </>
+                ) : (
+                  "Get Weather"
+                )}
+              </button>
+            </div>
+
+            {/* Selected city indicator */}
+            {selectedCity && selectedState && (
+              <div className="mt-2 flex items-center gap-1.5 text-xs text-green-600 dark:text-green-400">
+                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+                {selectedCity}, {selectedState} selected
+              </div>
+            )}
           </div>
         </form>
 
         {/* Error */}
         {error && (
-          <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 rounded-2xl p-4 mb-6">
+          <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 rounded-2xl p-4 mb-6 text-sm">
             {error}
+          </div>
+        )}
+
+        {/* Loading Skeleton */}
+        {loading && (
+          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-lg p-6 mb-6 animate-pulse">
+            <div className="h-5 bg-gray-200 dark:bg-gray-700 rounded w-1/3 mb-6" />
+            {[...Array(5)].map((_, i) => (
+              <div key={i} className="mb-5">
+                <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-1/4 mb-3" />
+                <div className="space-y-2 pl-7">
+                  <div className="h-3 bg-gray-100 dark:bg-gray-700/50 rounded w-full" />
+                  <div className="h-3 bg-gray-100 dark:bg-gray-700/50 rounded w-5/6" />
+                  <div className="h-3 bg-gray-100 dark:bg-gray-700/50 rounded w-4/6" />
+                </div>
+              </div>
+            ))}
           </div>
         )}
 
         {/* Weather Report */}
         {report && (
           <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-lg p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-                {city}, {state}
+            <div className="flex items-center justify-between mb-5 pb-3 border-b border-gray-100 dark:border-gray-700">
+              <h2 className="text-xl font-bold text-gray-900 dark:text-white">
+                📍 {selectedCity || query.split(",")[0]?.trim()}, {selectedState || query.split(",")[1]?.trim()}
               </h2>
-              {cached && (
-                <span className="text-xs text-gray-400 bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded-full">
-                  cached
+              <div className="flex items-center gap-2">
+                {cached && (
+                  <span className="text-xs text-gray-400 bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded-full">
+                    cached
+                  </span>
+                )}
+                <span className="text-xs text-gray-400">
+                  {new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                 </span>
-              )}
+              </div>
             </div>
-            <div className="text-gray-700 dark:text-gray-300 whitespace-pre-line leading-relaxed">
-              {report}
-            </div>
+            {renderWeatherReport(report)}
           </div>
         )}
 
         {/* Footer */}
         <p className="text-center text-xs text-gray-400 mt-8">
-          Powered by OpenRouter + ChatGPT
+          Powered by OpenRouter + GPT-4.1 Nano
         </p>
       </div>
     </div>

@@ -49,26 +49,45 @@ export async function POST(request: NextRequest) {
         "X-Title": "Weather GPT App",
       },
       body: JSON.stringify({
-        model: "openai/chatgpt-4o-latest",
+        model: "openai/gpt-4.1-nano",
         messages: [
           {
             role: "system",
-            content: `You are a helpful weather assistant. When given a US city and state, provide a concise current weather report. Include:
-- Current temperature (Fahrenheit)
-- Weather conditions (sunny, cloudy, rain, etc.)
-- Humidity percentage
-- Wind speed and direction
-- High and low for the day
-- A brief 3-day forecast outlook
+            content: `You are an expert weather reporter. When given a US city and state, provide a COMPREHENSIVE weather report. You MUST include ALL of the following sections with these EXACT headers:
 
-Format your response in clean, readable sections. Use simple headers like "Current Conditions", "Today's Range", and "3-Day Outlook". Keep it concise and informative. Do NOT use markdown headers (#). Use plain text with line breaks.`,
+CURRENT CONDITIONS
+- Temperature (°F) and "feels like" temperature
+- Weather description (e.g., partly cloudy, heavy rain, clear skies)
+- Humidity percentage
+- Wind speed (mph), direction, and gusts if applicable
+- Visibility (miles)
+- Barometric pressure (inHg) and trend (rising/falling/steady)
+- Dew point (°F)
+- UV Index (0-11+) with risk level (Low/Moderate/High/Very High/Extreme)
+
+TODAY'S DETAILS
+- High / Low temperatures
+- Sunrise and sunset times (local time)
+- Chance of precipitation (%)
+- Expected rainfall/snowfall amounts if any
+
+5-DAY FORECAST
+For each of the next 5 days, include: day name, high/low, conditions, and precipitation chance.
+
+WEATHER ALERTS
+- Any active watches, warnings, or advisories. If none, say "No active alerts."
+
+WHAT TO KNOW
+- 2-3 practical tips (what to wear, outdoor activity suitability, driving conditions, allergy info, etc.)
+
+Format with the section headers in ALL CAPS on their own line. Use line breaks between sections. Do NOT use markdown formatting, bullets, or special characters. Use plain text only.`,
           },
           {
             role: "user",
-            content: `What's the current weather in ${city}, ${state}?`,
+            content: `Give me a comprehensive weather report for ${city}, ${state}.`,
           },
         ],
-        max_tokens: 500,
+        max_tokens: 1000,
         temperature: 0.3,
       }),
       signal: AbortSignal.timeout(30000),
