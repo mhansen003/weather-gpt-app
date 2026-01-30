@@ -1,12 +1,12 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { US_CITIES } from "./us-cities";
 
 export default function Home() {
   const [query, setQuery] = useState("");
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [suggestLoading, setSuggestLoading] = useState(false);
   const [highlightIndex, setHighlightIndex] = useState(-1);
   const [selectedCity, setSelectedCity] = useState("");
   const [selectedState, setSelectedState] = useState("");
@@ -16,36 +16,82 @@ export default function Home() {
   const [cached, setCached] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const suggestionsRef = useRef<HTMLDivElement>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
-  // Filter cities as user types
-  const handleInputChange = useCallback((value: string) => {
-    setQuery(value);
-    setSelectedCity("");
-    setSelectedState("");
+  // AI-powered city suggestions with debounce
+  const fetchSuggestions = useCallback((value: string) => {
+    // Cancel any pending request
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (abortRef.current) abortRef.current.abort();
 
-    if (value.trim().length === 0) {
+    if (value.trim().length < 2) {
       setSuggestions([]);
       setShowSuggestions(false);
+      setSuggestLoading(false);
       return;
     }
 
-    const lower = value.toLowerCase();
-    const matches = US_CITIES.filter((c) => c.toLowerCase().includes(lower)).slice(0, 8);
-    setSuggestions(matches);
-    setShowSuggestions(matches.length > 0);
-    setHighlightIndex(-1);
+    setSuggestLoading(true);
+
+    // Debounce 300ms so we don't fire on every keystroke
+    debounceRef.current = setTimeout(async () => {
+      const controller = new AbortController();
+      abortRef.current = controller;
+
+      try {
+        const res = await fetch(
+          `/api/suggest?q=${encodeURIComponent(value.trim())}`,
+          { signal: controller.signal }
+        );
+        const data = await res.json();
+        const results: string[] = data.suggestions || [];
+
+        setSuggestions(results);
+        setShowSuggestions(results.length > 0);
+        setHighlightIndex(-1);
+      } catch (err: unknown) {
+        if (err instanceof Error && err.name !== "AbortError") {
+          setSuggestions([]);
+          setShowSuggestions(false);
+        }
+      } finally {
+        setSuggestLoading(false);
+      }
+    }, 300);
   }, []);
+
+  // Clean up on unmount
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      if (abortRef.current) abortRef.current.abort();
+    };
+  }, []);
+
+  const handleInputChange = useCallback(
+    (value: string) => {
+      setQuery(value);
+      setSelectedCity("");
+      setSelectedState("");
+      fetchSuggestions(value);
+    },
+    [fetchSuggestions]
+  );
 
   // Select a city from suggestions
   const selectCity = useCallback((cityState: string) => {
-    const parts = cityState.split(", ");
-    if (parts.length === 2) {
-      setSelectedCity(parts[0]);
-      setSelectedState(parts[1]);
+    // Parse "City, ST" format
+    const commaIdx = cityState.lastIndexOf(",");
+    if (commaIdx > 0) {
+      setSelectedCity(cityState.slice(0, commaIdx).trim());
+      setSelectedState(cityState.slice(commaIdx + 1).trim());
     }
     setQuery(cityState);
     setShowSuggestions(false);
     setHighlightIndex(-1);
+    setSuggestLoading(false);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
   }, []);
 
   // Keyboard navigation for suggestions
@@ -78,7 +124,7 @@ export default function Home() {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [showSuggestions, suggestions, highlightIndex, selectedCity, selectedState]
+    [showSuggestions, suggestions, highlightIndex, selectedCity, selectedState, selectCity]
   );
 
   // Close suggestions when clicking outside
@@ -114,12 +160,17 @@ export default function Home() {
     let city = selectedCity;
     let state = selectedState;
     if (!city || !state) {
-      const parts = query.split(",").map((s) => s.trim());
-      if (parts.length === 2 && parts[0].length > 0 && parts[1].length === 2) {
-        city = parts[0];
-        state = parts[1].toUpperCase();
-      } else {
-        setError("Please select a city from the suggestions, or type as \"City, ST\" (e.g. Denver, CO)");
+      const commaIdx = query.lastIndexOf(",");
+      if (commaIdx > 0) {
+        const c = query.slice(0, commaIdx).trim();
+        const s = query.slice(commaIdx + 1).trim().toUpperCase();
+        if (c.length > 0 && s.length === 2) {
+          city = c;
+          state = s;
+        }
+      }
+      if (!city || !state) {
+        setError("Please select a city from the AI suggestions, or type as \"City, ST\" (e.g. Denver, CO)");
         return;
       }
     }
@@ -154,17 +205,18 @@ export default function Home() {
   }
 
   // Highlight matching text in suggestions
-  function highlightMatch(text: string, query: string) {
+  function highlightMatch(text: string, q: string) {
+    if (!q) return text;
     const lower = text.toLowerCase();
-    const idx = lower.indexOf(query.toLowerCase());
+    const idx = lower.indexOf(q.toLowerCase());
     if (idx === -1) return text;
     return (
       <>
         {text.slice(0, idx)}
         <span className="font-semibold text-blue-600 dark:text-blue-400">
-          {text.slice(idx, idx + query.length)}
+          {text.slice(idx, idx + q.length)}
         </span>
-        {text.slice(idx + query.length)}
+        {text.slice(idx + q.length)}
       </>
     );
   }
@@ -227,7 +279,7 @@ export default function Home() {
             Weather GPT
           </h1>
           <p className="text-gray-500 dark:text-gray-400 mt-1">
-            Comprehensive AI weather reports for any US city
+            AI-powered weather reports for any US city
           </p>
         </div>
 
@@ -240,14 +292,21 @@ export default function Home() {
             <div className="flex gap-3">
               <div className="relative flex-1">
                 <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
-                  <svg className="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                  </svg>
+                  {suggestLoading ? (
+                    <svg className="animate-spin h-4 w-4 text-blue-500" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                  ) : (
+                    <svg className="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                  )}
                 </div>
                 <input
                   ref={inputRef}
                   type="text"
-                  placeholder="Search for a city... (e.g. Denver, San Francisco)"
+                  placeholder="Start typing a city name..."
                   value={query}
                   onChange={(e) => handleInputChange(e.target.value)}
                   onFocus={() => {
@@ -258,12 +317,18 @@ export default function Home() {
                   className="w-full pl-10 pr-4 py-3 rounded-xl border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
                 />
 
-                {/* Autocomplete Dropdown */}
+                {/* AI Autocomplete Dropdown */}
                 {showSuggestions && suggestions.length > 0 && (
                   <div
                     ref={suggestionsRef}
                     className="absolute z-50 top-full left-0 right-0 mt-1 bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-xl shadow-xl overflow-hidden max-h-64 overflow-y-auto"
                   >
+                    <div className="px-3 py-1.5 text-[10px] font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider border-b border-gray-100 dark:border-gray-600 flex items-center gap-1.5">
+                      <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                      </svg>
+                      AI suggestions
+                    </div>
                     {suggestions.map((city, i) => (
                       <button
                         key={city + i}
